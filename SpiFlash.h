@@ -54,11 +54,21 @@ class SpiFlash {
 		CMD_SECTOR_ERASE_4K = 0x20,
 		CMD_READ_UNIQUE_ID = 0x4B,
 		CMD_BLOCK_ERASE_32K = 0x52,
+		CMD_RELEASE_POWER_DOWN = 0xAB,
+		CMD_POWER_DOWN = 0xB9,
 		CMD_JEDEC_ID = 0x9F,
 		REG_STATUS_REGISTER_BUSY = (1 << 0),
 	};
 
 	SpiDevice spi;
+	bool isPoweredDown;
+
+	void recoverFromPowerDown(void) {
+		if (isPoweredDown) {
+			spi.transfer(CMD_RELEASE_POWER_DOWN);
+			isPoweredDown = false;
+		}
+	}
 
 	//! Set the write enable latch.
 	void writeEnable(void) {
@@ -92,11 +102,13 @@ class SpiFlash {
 public:
 	void init(void) {
 		spi.master();
+		recoverFromPowerDown();
 	}
 	//! Waits for the chip to finish the current operation. Must be called
 	//! after erase/write operations to ensure successive commands are executed.
 	//! \returns SpiFlashErrorSuccess or SpiFlashErrorTimeout otherwise.
 	int wait(void) {
+		recoverFromPowerDown();
 #ifdef ARDUINO
 		const uint32_t TIMEOUT = 800; // 800ms.
 		uint32_t start = millis();
@@ -119,11 +131,13 @@ public:
 	//! Returns the contents of SPI Flash status register.
 	//! \returns register contents.
 	uint8_t getStatus(void) {
+		recoverFromPowerDown();
 		return spi.transferRegister(CMD_READ_STATUS_REGISTER, 0);
 	}
 	//! Sets the SPI Flash status register (non-volatile bits only).
 	//! \param registerValue Status register value.
 	int setStatus(uint8_t registerValue) {
+		recoverFromPowerDown();
 		//if (checkWriteProtection() != SpiFlashWriteProtectionNone) {
 		//	return SpiFlashErrorAccessDenied;
 		//}
@@ -141,6 +155,7 @@ public:
 		if ((offset + bytes) > FLASH_SIZE) {
 			return SpiFlashErrorInputValue;
 		}
+		recoverFromPowerDown();
 		const size_t length = 4 + bytes; // Command + address + bytes.
 		uint8_t* buffer = new uint8_t[length];
 		for (size_t i = 0; i < length; i++) {
@@ -167,6 +182,7 @@ public:
 		if (offset % 4096 || bytes % 4096) {
 			return SpiFlashErrorInputValue;
 		}
+		recoverFromPowerDown();
 		// Largest unit is block (32kb).
 		if (offset % (32 * 1024) == 0) {
 			while (bytes != (bytes % (32 * 1024))) {
@@ -199,6 +215,7 @@ public:
 		if (!data || ((offset + bytes) > FLASH_SIZE)) {
 			return SpiFlashErrorInputValue;
 		}
+		recoverFromPowerDown();
 		uint16_t writeSize;
 		while (bytes > 0) {
 			// Write length can not go beyond the end of the flash page.
@@ -234,6 +251,7 @@ public:
 	//! capacity).
 	//! \returns Flash JEDEC ID or 0 on error.
 	uint32_t getJedecId(void) {
+		recoverFromPowerDown();
 		uint32_t jedecId = 0;
 		const size_t length = 4; // Command + manufacturer + type + capacity.
 		uint8_t buffer[length] = { 0 };
@@ -248,6 +266,7 @@ public:
 	//! Returns the SPI flash unique ID (serial).
 	//! \returns Flash unique ID or 0 on error.
 	uint64_t getUniqueId(void) {
+		recoverFromPowerDown();
 		uint64_t uniqueId = 0;
 		const size_t length = 5 + 8; // Command + dummy bytes + unique id.
 		uint8_t buffer[length] = { 0 };
@@ -263,6 +282,13 @@ public:
 			((uint64_t)buffer[11] <<  8) |
 			((uint64_t)buffer[12] <<  0);
 		return uniqueId;
+	}
+	//! Set Flash memory in power down mode.
+	void sleep(void) {
+		if (!isPoweredDown) {
+			spi.transfer(CMD_POWER_DOWN);
+			isPoweredDown = true;
+		}
 	}
 };
 
